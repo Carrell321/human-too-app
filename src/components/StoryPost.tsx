@@ -6,6 +6,8 @@ import { useJourney, type JourneyState } from "../state/journey";
 import { EXPERIENCE_BY_ID, SUPPORT } from "../lib/content";
 import { CIRCLE_BY_ID, MEMBERS } from "../lib/sample-data";
 import type { Story, StoryPhoto } from "../lib/types";
+import { SIMULATED_REACTIONS, live, persist, setReaction } from "../lib/community";
+export { SIMULATED_REACTIONS };
 
 export function authorName(s: JourneyState, story: Story): string | null {
   if (story.anonymous) return null;
@@ -15,10 +17,11 @@ export function authorName(s: JourneyState, story: Story): string | null {
 
 /** The two MVP reactions (S8). Counts are never shown to non-authors (D-6). */
 export function useReact(story: Story) {
-  const { state, set, openSheet } = useJourney();
+  const { state, set, openSheet, say } = useJourney();
   const mine = state.reactions[story.id] ?? {};
   const toggle = (kind: "see" | "same") => {
     const turningOn = !mine[kind];
+    if (live()) persist(setReaction(story.id, kind, turningOn), say, "Your response didn't save");
     set(s => ({ ...s, reactions: { ...s.reactions, [story.id]: { ...s.reactions[story.id], [kind]: turningOn } } }));
     if (turningOn && !state.explainerSeen) {
       set(s => ({ ...s, explainerSeen: true }));
@@ -64,14 +67,12 @@ export function PrivateSummary({ story }: { story: Story }) {
   );
 }
 
-/** Reactions the prototype simulates on the member's own Stories, so the author view can be experienced. */
-export const SIMULATED_REACTIONS: Record<string, [string, "see" | "same"][]> = {};
 
 /** S8c: consent-based connect offer after Same Here. */
 export function ConnectOffer({ story }: { story: Story }) {
   const { state, set, say } = useJourney();
   const mine = state.reactions[story.id] ?? {};
-  if (!mine.same || story.anonymous || story.authorId === "me" || state.connections.includes(story.authorId) || state.connectDismissed.includes(story.id)) return null;
+  if (live() || !mine.same || story.anonymous || story.authorId === "me" || state.connections.includes(story.authorId) || state.connectDismissed.includes(story.id)) return null;
   const name = MEMBERS[story.authorId]?.displayName ?? "them";
   if (state.requested.includes(story.authorId)) {
     return <div className="connect-offer"><span>You've offered to connect with {name}. {name} can choose whether to say yes.</span></div>;

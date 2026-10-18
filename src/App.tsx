@@ -10,6 +10,7 @@ import { effectiveRole, useJourney } from "./state/journey";
 import { PUBLIC_DURING_BETA, canOpen } from "./lib/launch";
 import { myProfile, session as currentSession, signedIn } from "./lib/backend";
 import { SheetHost, Toast } from "./components/Sheets";
+import { useCommunityRefresh } from "./state/sync";
 import { Covenant, CovenantPage, Experiences, Join, OurStory, Privacy, Reasons, Welcome } from "./screens/Onboarding";
 import { Journal, Organizations, Plus, Pro, ProApply, ProfessionalDetail, Professionals, Programs, Resources, Sessions } from "./screens/Beyond";
 import { CircleScreen, Circles, Person, Share, Shared, StoryScreen, Today, You } from "./screens/Member";
@@ -57,7 +58,7 @@ function useRealSession() {
     if (state.session === "signedOut" && signedIn()) {
       myProfile().then(p => {
         if (p && p.confirmed_adult && p.display_name.trim()) {
-          set(s => ({ ...s, session: "member", role: p.is_founder ? "founder" : "member", displayName: p.display_name,
+          set(s => ({ ...s, session: "member", role: p.is_founder ? "founder" : "member", displayName: p.display_name, experiences: s.experiences.length ? s.experiences : (p.currently_navigating as any),
             confirmedAdultAt: s.confirmedAdultAt ?? new Date().toISOString(),
             profile: { ...s.profile, shortLine: p.short_line ?? "", learning: p.learning ?? "", navigating: p.currently_navigating as any, speakFrom: p.can_speak_from as any } }));
         }
@@ -83,6 +84,7 @@ function useAccessRules() {
 
 export function App() {
   useRealSession();
+  useCommunityRefresh();
   useAccessRules();
   return (
     <div className="layout">
@@ -91,7 +93,7 @@ export function App() {
       </div>
       <aside className="guide" aria-label="Beta guide">
         <h2>HUMAN, TOO beta build</h2>
-        <p>Sign-in and profiles are real. Stories, Circles and people are still sample content while we build.</p>
+        <p>Everything here is real: accounts, Stories, I See You, Same Here, replies and Circles. Photos in Stories and connecting with people come next.</p>
         <p>To see the safety check, write a Story that includes "feeling hopeless" or "I want to die".</p>
       </aside>
       <SheetHost />

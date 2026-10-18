@@ -12,6 +12,8 @@ import { ARRIVALS, CONTENT_NOTES, EXPERIENCES, EXPERIENCE_BY_ID, MORE_ARRIVALS, 
 import { CIRCLES, CIRCLE_BY_ID, MEMBERS } from "../lib/sample-data";
 import { anonymousAllowed, canReplyAnonymously, canSee, replyState, roundToTen, sectionVisibleTo, todayFeed } from "../lib/visibility";
 import { checkText } from "../lib/safety";
+import { leaveCircle, live, loadReplies, newId, persist, saveReply, saveStory } from "../lib/community";
+import { useCommunityRefresh } from "../state/sync";
 import type { Circle, Reply, SectionAudience, Story, SupportPreference } from "../lib/types";
 
 function greeting() {
@@ -23,6 +25,7 @@ function greeting() {
 export function Today() {
   const { state, set, openSheet } = useJourney();
   const [moreOpen, setMoreOpen] = useState(false);
+  useCommunityRefresh();
 
   // Build Today once per visit (or when the member changes what shapes it),
   // so a Story doesn't vanish the moment you react to it.
@@ -132,7 +135,7 @@ function CircleRow({ circle, flush = false }: { circle: Circle; flush?: boolean 
         <span className="stack grow">
           <span className="strong">{circle.name}</span>
           <span className="small muted" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{circle.purpose}</span>
-          <span className="tiny muted">{circle.conversationsToday} conversations today</span>
+          {!live() && <span className="tiny muted">{circle.conversationsToday} conversations today</span>}
         </span>
       </Link>
       {joined ? <span className="small muted">Joined</span>
@@ -153,6 +156,12 @@ export function StoryScreen() {
   const [err, setErr] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Load this Story's replies from the database each time it's opened.
+  useEffect(() => {
+    if (!live() || !story) return;
+    loadReplies(story.id).then(replies => set(s => ({ ...s, stories: s.stories.map(x => x.id === id ? { ...x, replies } : x) }))).catch(() => {});
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!story || !canSee(story, viewerOf(state))) {
     return (
       <>
@@ -172,12 +181,14 @@ export function StoryScreen() {
     const latest = storyById(state, story.id)!;
     if (replyState(latest, "me").kind === "off" || replyState(latest, "me").kind === "listen") { setErr("Replies were closed while you were writing. You can copy what you wrote."); return; }
     const check = checkText(v);
-    const reply: Reply = { id: "r" + Date.now(), authorId: "me", anonymous: anon && canReplyAnonymously(story), text: v, postedLabel: "Just now", heldForReview: check.level === "covenant", children: [] };
+    const reply: Reply = { id: newId(), authorId: "me", anonymous: anon && canReplyAnonymously(story), text: v, postedLabel: "Just now", heldForReview: check.level === "covenant", children: [] };
     set(s => ({
       ...s, stories: s.stories.map(x => x.id !== story.id ? x : {
         ...x, replies: replyTo ? x.replies.map(r => r.id === replyTo ? { ...r, children: [...r.children, reply] } : r) : [...x.replies, reply],
       }),
     }));
+    if (live()) saveReply(story.id, reply, replyTo).catch(e => { setText(v); setErr(`Your reply didn't send. ${e?.message ?? "Please try again."}`);
+      set(s => ({ ...s, stories: s.stories.map(x => x.id !== story.id ? x : { ...x, replies: x.replies.filter(r => r.id !== reply.id).map(r => ({ ...r, children: r.children.filter(c => c.id !== reply.id) })) }) })); });
     setText(""); setReplyTo(null); setErr(null);
     if (check.level === "covenant") say("Thank you for replying. A person on our team will look at it before it appears.");
     else if (check.level === "imminent" || check.level === "distress") openSheet({ kind: "support", lead: "Thank you for sharing that. You deserve support too." });
@@ -280,7 +291,7 @@ export function CircleScreen() {
     .sort((a, b) => b.postedOrder - a.postedOrder);
   const leave = () => openSheet({
     kind: "confirm", title: `Leave ${circle.name}?`, body: "Your Stories here stay visible to this Circle unless you delete them.", confirmLabel: "Leave Circle", cancelLabel: "Stay",
-    onConfirm: () => { set(s => ({ ...s, joined: s.joined.filter(c => c !== circle.id), todayIds: null })); say(`You left ${circle.name}.`); },
+    onConfirm: () => { if (live()) persist(leaveCircle(circle.id), say, "Leaving didn't save"); set(s => ({ ...s, joined: s.joined.filter(c => c !== circle.id), todayIds: null })); say(`You left ${circle.name}.`); },
   });
   return (
     <>
@@ -291,7 +302,7 @@ export function CircleScreen() {
           <span className="circle-cover" style={{ background: `linear-gradient(140deg, ${circle.tone[0]}, ${circle.tone[1]})` }} aria-hidden="true" />
           <h1 className="headline">{circle.name}</h1>
           <p className="lede" style={{ color: "var(--ink)" }}>{circle.purpose}</p>
-          <p className="small muted">About {roundToTen(circle.approxMembers)} members · Hosted by {circle.host} from the HUMAN, TOO team</p>
+          <p className="small muted">{live() ? "Hosted by the HUMAN, TOO team" : `About ${roundToTen(circle.approxMembers)} members · Hosted by ${circle.host} from the HUMAN, TOO team`}</p>
           <details className="banner small"><summary className="strong" style={{ cursor: "pointer" }}>How we show up here</summary>
             <ul className="stack g4" style={{ margin: "8px 0 0", paddingLeft: 18 }}>{circle.norms.map(n => <li key={n}>{n}</li>)}<li>Our Community Covenant applies here too.</li></ul>
           </details>
@@ -347,7 +358,7 @@ export function Share() {
   };
 
   const publish = (flagged = false) => {
-    const id = "mine-" + Date.now();
+    const id = newId();
     const story: Story = {
       id, authorId: "me", anonymous: d.anonymous && anonymousAllowed(d.audience), experiences: d.experiences,
       audience: d.audience!, circleId: d.audience === "circle" ? d.circleId : null, support: d.support!,
@@ -355,7 +366,13 @@ export function Share() {
       postedLabel: "Just now", postedOrder: 1000 + Date.now() / 1e10, flaggedUrgent: flagged, replies: [],
     };
     set(s => ({ ...s, stories: [story, ...s.stories], draft: emptyDraft() }));
-    if (!story.anonymous) {
+    if (live()) {
+      saveStory(story).catch(e => {
+        set(s => ({ ...s, stories: s.stories.filter(x => x.id !== id), draft: { ...d, step: 4 } }));
+        say(`Your Story didn't share, so we kept it as a draft. ${e?.message ?? "Please try again."}`);
+        router.replace("/share");
+      });
+    } else if (!story.anonymous) {
       // Prototype: simulate the author's private view of reactions a moment later.
       setTimeout(() => { SIMULATED_REACTIONS[id] = [["maya", "see"], ["theo", "see"], ["jordan", "same"]]; set(s => ({ ...s })); }, 5000);
     }
@@ -378,7 +395,9 @@ export function Share() {
         <textarea id="story" className="input" rows={10} style={{ background: "transparent", padding: 0, fontSize: 18, border: 0, minHeight: 240 }} placeholder="Write it in your own words. There's no right way." value={d.text} onChange={e => patch({ text: e.target.value })} autoFocus />
         <div className="row g8"><PrivacyLine>Saved as a draft on this device.</PrivacyLine><span className="grow" />{len >= 2500 && <span className={"counter" + (len > 3000 ? " over" : "")}>{len.toLocaleString()} / 3,000</span>}</div>
         {len > 3000 && <ErrorText>Stories can be up to 3,000 characters. You're {len - 3000} over.</ErrorText>}
-        {d.photo ? (
+        {live() ? (
+          <p className="help">Photos in Stories are coming soon, once photo safety checks are ready.</p>
+        ) : d.photo ? (
           <div className="stack g12">
             <div className="photo-preview">
               <img className="story-photo" src={d.photo.src} alt={d.photo.alt || "Your photo"} />
@@ -682,7 +701,7 @@ export function Person() {
             <div className="stack g4 grow"><h1 className="headline">{m.displayName}</h1>{m.sectionsOpen && m.shortLine && <p className="muted">{m.shortLine}</p>}</div>
             <Avatar name={m.displayName} size="lg" />
           </div>
-          {connected ? <button className="btn btn-secondary btn-sm btn-block" onClick={() => { set(s => ({ ...s, connections: s.connections.filter(c => c !== id) })); say("Connection removed. They won't be told."); }}>Connected <Icon name="check" size={16} /></button>
+          {live() ? <p className="small muted">Offering to connect is coming in the next update.</p> : connected ? <button className="btn btn-secondary btn-sm btn-block" onClick={() => { set(s => ({ ...s, connections: s.connections.filter(c => c !== id) })); say("Connection removed. They won't be told."); }}>Connected <Icon name="check" size={16} /></button>
             : requested ? <button className="btn btn-secondary btn-sm btn-block" disabled>Request sent</button>
             : <button className="btn btn-primary btn-sm btn-block" onClick={() => { set(s => ({ ...s, requested: [...s.requested, id] })); say(`Sent. ${m.displayName} can choose whether to connect.`); }}>Offer to connect</button>}
         </div>

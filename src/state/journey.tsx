@@ -10,6 +10,7 @@ import type { ArrivalState, Audience, ContentNote, ExperienceId, SectionAudience
 import { SAMPLE_STORIES } from "../lib/sample-data";
 import type { Viewer } from "../lib/visibility";
 import type { Role } from "../lib/launch";
+import { signedIn } from "../lib/backend";
 
 export interface ShareDraft {
   step: number;
@@ -80,7 +81,8 @@ export const initialState = (): JourneyState => ({
   todayIds: null, joined: [], circleInterest: [], reactions: {},
   connections: [], requested: [], connectDismissed: [], blocked: [], hidden: [], uncovered: [],
   explainerSeen: false,
-  stories: structuredClone(SAMPLE_STORIES),
+  // Signed-in members only ever see real Stories; the samples are for the signed-out preview.
+  stories: signedIn() ? [] : structuredClone(SAMPLE_STORIES),
   draft: emptyDraft(),
   plus: { active: false, via: null, organization: null },
   journal: [], programsStarted: [], sessionsReserved: [],
@@ -93,7 +95,11 @@ const KEY = "human-too-journey-v4";
 function load(): JourneyState {
   try {
     const raw = sessionStorage.getItem(KEY);
-    if (raw) return { ...initialState(), ...JSON.parse(raw) };
+    if (raw) {
+      const saved = { ...initialState(), ...JSON.parse(raw) } as JourneyState;
+      if (signedIn()) saved.stories = saved.stories.filter(s => /^[0-9a-f-]{36}$/i.test(s.id));
+      return saved;
+    }
   } catch { /* storage unavailable: start fresh */ }
   return initialState();
 }

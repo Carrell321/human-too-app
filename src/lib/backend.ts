@@ -21,7 +21,7 @@ function store(s: Session | null) {
 
 export class BackendError extends Error { constructor(message: string, public status = 0, public code = "") { super(message); } }
 
-async function call(path: string, init: RequestInit & { auth?: boolean } = {}) {
+export async function call(path: string, init: RequestInit & { auth?: boolean } = {}) {
   const headers: Record<string, string> = { apikey: SUPABASE_KEY, "Content-Type": "application/json", ...(init.headers as Record<string, string> || {}) };
   if (init.auth) { const s = await session(); if (!s) throw new BackendError("Please sign in again.", 401); headers.Authorization = `Bearer ${s.access_token}`; }
   let res: Response;

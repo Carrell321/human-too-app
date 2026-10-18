@@ -6,6 +6,7 @@ import { useRouter } from "../router/router";
 import { CIRCLE_BY_ID, MEMBERS } from "../lib/sample-data";
 import { EXPERIENCE_BY_ID, REPORT_REASONS } from "../lib/content";
 import { SIMULATED_REACTIONS, authorName } from "./StoryPost";
+import { blockMember, joinCircle, live, persist, sendReport, updateStory } from "../lib/community";
 import { Avatar } from "./Chrome";
 
 function Sheet({ title, children, onClose, dismissable = true }: { title: string; children: ReactNode; onClose: () => void; dismissable?: boolean }) {
@@ -143,6 +144,7 @@ export function SheetHost() {
             <div className="stack">
               {story.support !== "listen" && (
                 <button className="menu-row" onClick={() => {
+                  if (live()) persist(updateStory(story.id, { replies_off: !story.repliesOff }), say);
                   set(s => ({ ...s, stories: s.stories.map(x => x.id === story.id ? { ...x, repliesOff: !x.repliesOff } : x) }));
                   closeSheet(); say(story.repliesOff ? "Replies are open again." : "Replies are off.");
                 }}><Icon name="chat" />{story.repliesOff ? "Open replies again" : "Turn off replies"}</button>
@@ -150,12 +152,12 @@ export function SheetHost() {
               {!story.anonymous && story.audience !== "people" && (
                 <button className="menu-row" onClick={() => openSheet({
                   kind: "confirm", title: "Make this Story anonymous?", body: "Your name will be removed from it. This can't be undone.", confirmLabel: "Make anonymous",
-                  onConfirm: () => { set(s => ({ ...s, stories: s.stories.map(x => x.id === story.id ? { ...x, anonymous: true } : x) })); say("Your Story is now anonymous."); },
+                  onConfirm: () => { if (live()) persist(updateStory(story.id, { anonymous: true }), say); set(s => ({ ...s, stories: s.stories.map(x => x.id === story.id ? { ...x, anonymous: true } : x) })); say("Your Story is now anonymous."); },
                 })}><Icon name="anon" />Make anonymous</button>
               )}
               <button className="menu-row danger" onClick={() => openSheet({
                 kind: "confirm", title: "Delete this Story?", body: "This removes your Story and its replies for everyone.", confirmLabel: "Delete Story", cancelLabel: "Keep it", danger: true,
-                onConfirm: () => { set(s => ({ ...s, stories: s.stories.map(x => x.id === story.id ? { ...x, deleted: true } : x) })); say("Your Story was deleted."); router.reset("/you"); },
+                onConfirm: () => { if (live()) persist(updateStory(story.id, { deleted: true }), say, "Your Story wasn't deleted"); set(s => ({ ...s, stories: s.stories.map(x => x.id === story.id ? { ...x, deleted: true } : x) })); say("Your Story was deleted."); router.reset("/you"); },
               })}><Icon name="close" />Delete</button>
             </div>
           </Sheet>
@@ -170,6 +172,7 @@ export function SheetHost() {
               <button className="menu-row danger" onClick={() => openSheet({
                 kind: "confirm", title: `Block ${name}?`, body: "You won't see each other's Stories, replies or profiles, and they can't connect with you. They won't be told.", confirmLabel: "Block", danger: true,
                 onConfirm: () => {
+                  if (live()) persist(blockMember(story.authorId), say, "The block didn't save");
                   set(s => ({ ...s, blocked: [...s.blocked, story.authorId], connections: s.connections.filter(c => c !== story.authorId), todayIds: null }));
                   say(`${name} is blocked. They won't be told.`); router.reset("/today");
                 },
@@ -195,6 +198,11 @@ export function SheetHost() {
           <div className="field"><label htmlFor="report-note">Anything else we should know? (optional)</label><textarea id="report-note" className="input" rows={3} maxLength={500} /></div>
           {name && <label className="checkbox"><input type="checkbox" checked={alsoBlock} onChange={e => setAlsoBlock(e.target.checked)} /> Also block {name}</label>}
           <button className="btn btn-primary btn-block" disabled={reason === null} onClick={() => {
+            if (live() && story && reason !== null) {
+              const note = (document.getElementById("report-note") as HTMLTextAreaElement | null)?.value ?? "";
+              persist(sendReport(story.id, REPORT_REASONS[reason], note), say, "Your report didn't send");
+              if (alsoBlock) persist(blockMember(story.authorId), say, "The block didn't save");
+            }
             if (alsoBlock && story) set(s => ({ ...s, blocked: [...s.blocked, story.authorId], todayIds: null }));
             say("Thank you. A person on our team will review this and let you know what happens.");
             if (reason === 0) openSheet({ kind: "support", lead: "Thank you for speaking up. If someone is in immediate danger, call 911." });
@@ -227,6 +235,7 @@ export function SheetHost() {
           <p className="privacy-line"><Icon name="lock" size={15} /> No one sees a list of who's here. People only see you when you share or reply.</p>
           <div className="stack g8">
             <button className="btn btn-primary btn-block" onClick={() => {
+              if (live()) persist(joinCircle(c.id), say, "Joining didn't save");
               set(s => ({ ...s, joined: [...new Set([...s.joined, c.id])], todayIds: null }));
               closeSheet(); say(`You're part of ${c.name} now.`);
             }}>Join Circle</button>
